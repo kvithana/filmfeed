@@ -1,0 +1,34 @@
+{
+  "name": "filmfeed",
+  "version": "0.1.0",
+  "description": "Serverless Radarr import feeds from public movie lists. No always-on server.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kvithana/filmfeed.git"
+  },
+  "homepage": "https://github.com/kvithana/filmfeed",
+  "bugs": {
+    "url": "https://github.com/kvithana/filmfeed/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "start": "tsx src/node.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.9.8",
+    "tsx": "^4.20.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.38.0"
+  }
+}

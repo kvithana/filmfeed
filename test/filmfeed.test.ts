@@ -1,0 +1,136 @@
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { createApp } from "../src/app.js";
+import { letterboxdToRadarr, parseLetterboxdRss } from "../src/letterboxd.js";
+import { dedupe, parseLimit } from "../src/lib.js";
+import { mdblistToRadarr } from "../src/mdblist.js";
+import { tmdbPageToRadarr } from "../src/tmdb.js";
+import { traktToRadarr } from "../src/trakt.js";
+
+const diary = `<?xml version="1.0"?>
+<rss><channel>
+  <item>
+    <title>Am&amp;lie, 2001 - ★★★★★</title>
+    <letterboxd:filmTitle>Am&#233;lie</letterboxd:filmTitle>
+    <letterboxd:filmYear>2001</letterboxd:filmYear>
+    <letterboxd:memberRating>5.0</letterboxd:memberRating>
+    <tmdb:movieId>194</tmdb:movieId>
+  </item>
+  <item>
+    <letterboxd:filmTitle>No Id</letterboxd:filmTitle>
+    <letterboxd:filmYear>1999</letterboxd:filmYear>
+  </item>
+  <item>
+    <letterboxd:filmTitle>Amelie again</letterboxd:filmTitle>
+    <letterboxd:memberRating>2</letterboxd:memberRating>
+    <tmdb:movieId>194</tmdb:movieId>
+  </item>
+  <item>
+    <letterboxd:filmTitle>Low</letterboxd:filmTitle>
+    <letterboxd:memberRating>3</letterboxd:memberRating>
+    <tmdb:movieId>550</tmdb:movieId>
+  </item>
+</channel></rss>`;
+
+describe("letterboxd rss", () => {
+  it("reads titles, years, ratings, and tmdb ids", () => {
+    const entries = parseLetterboxdRss(diary);
+    expect(entries[0]).toMatchObject({ title: "Amélie", year: "2001", tmdbId: 194, rating: 5 });
+    expect(entries).toHaveLength(4);
+  });
+
+  it("drops films without a tmdb id and applies minRating", () => {
+    const movies = letterboxdToRadarr(parseLetterboxdRss(diary), 4);
+    expect(movies.map((movie) => movie.id)).toEqual([194]);
+    expect(movies[0]?.release_year).toBe("2001");
+  });
+});
+
+describe("other sources", () => {
+  it("maps mdblist movies and skips shows", () => {
+    const movies = mdblistToRadarr([
+      { id: 475557, title: "Joker", imdb_id: "tt7286456", release_year: 2019, mediatype: "movie", adult: 0 },
+      { id: 1, title: "A show", mediatype: "show", release_year: 2020 },
+    ]);
+    expect(movies).toEqual([
+      expect.objectContaining({ id: 475557, imdb_id: "tt7286456", title: "Joker", adult: false, release_year: "2019" }),
+    ]);
+  });
+
+  it("maps a tmdb list page", () => {
+    const movies = tmdbPageToRadarr({
+      items: [{ id: 550, title: "Fight Club", release_date: "1999-10-15", adult: false }],
+    });
+    expect(movies[0]).toMatchObject({ id: 550, title: "Fight Club", release_year: "1999" });
+  });
+
+  it("maps trakt movies", () => {
+    const movies = traktToRadarr([{ movie: { title: "Fight Club", year: 1999, ids: { tmdb: 550, imdb: "tt0137523" } } }]);
+    expect(movies[0]).toMatchObject({ id: 550, imdb_id: "tt0137523" });
+  });
+
+  it("dedupes and caps", () => {
+    const movies = dedupe(
+      [
+        { id: 1, title: "A", adult: false },
+        { id: 1, title: "A again", adult: false },
+        { id: 2, title: "B", adult: false },
+      ],
+      1,
+    );
+    expect(movies.map((movie) => movie.id)).toEqual([1]);
+  });
+
+  it("rejects a bad limit", () => {
+    expect(() => parseLimit("0")).toThrow(/limit/);
+  });
+});
+
+describe("http", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.TMDB_API_KEY;
+    delete process.env.TRAKT_CLIENT_ID;
+  });
+
+  it("serves a homepage and health check", async () => {
+    const app = createApp();
+    const home = await app.request("http://localhost/");
+    expect(home.status).toBe(200);
+    expect(await home.text()).toContain("Custom Lists");
+    const health = await app.request("http://localhost/health");
+    expect(await health.json()).toEqual({ ok: true, name: "filmfeed" });
+  });
+
+  it("turns a diary feed into Radarr JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(diary, { status: 200, headers: { "content-type": "application/rss+xml" } })),
+    );
+    const response = await createApp().request("http://localhost/api/letterboxd/dave?limit=10");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-filmfeed-source")).toBe("letterboxd-diary");
+    const body = (await response.json()) as { id: number }[];
+    expect(body.map((movie) => movie.id)).toEqual([194, 550]);
+  });
+
+  it("explains a blocked letterboxd list without pretending it succeeded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("<!DOCTYPE html>Just a moment...", { status: 403, headers: { "content-type": "text/html" } })),
+    );
+    const response = await createApp().request("http://localhost/api/letterboxd/dave/list/my-list");
+    expect(response.status).toBe(502);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/does not bypass/);
+  });
+
+  it("rejects usernames that could change the host", async () => {
+    const response = await createApp().request("http://localhost/api/letterboxd/dave.evil");
+    expect(response.status).toBe(400);
+  });
+
+  it("reports a missing tmdb key", async () => {
+    const response = await createApp().request("http://localhost/api/tmdb/1");
+    expect(response.status).toBe(501);
+  });
+});
