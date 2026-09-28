@@ -1,10 +1,11 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { createApp } from "../src/app.js";
+import { parseFilmIds, parsePosters, parseRatingToken } from "../src/letterboxd-html.js";
 import { letterboxdToRadarr, parseLetterboxdRss } from "../src/letterboxd.js";
 import { dedupe, parseLimit } from "../src/lib.js";
 import { mdblistToRadarr } from "../src/mdblist.js";
 import { tmdbPageToRadarr } from "../src/tmdb.js";
-import { traktToRadarr } from "../src/trakt.js";
+import { traktMoviesUrl, traktToRadarr } from "../src/trakt.js";
 
 const diary = `<?xml version="1.0"?>
 <rss><channel>
@@ -63,6 +64,11 @@ describe("other sources", () => {
     expect(movies[0]).toMatchObject({ id: 550, title: "Fight Club", release_year: "1999" });
   });
 
+  it("uses Trakt's watchlist route for that name", () => {
+    expect(traktMoviesUrl("ada", "watchlist")).toBe("https://api.trakt.tv/users/ada/watchlist/movies");
+    expect(traktMoviesUrl("ada", "criterion")).toBe("https://api.trakt.tv/users/ada/lists/criterion/items/movies");
+  });
+
   it("maps trakt movies", () => {
     const movies = traktToRadarr([{ movie: { title: "Fight Club", year: 1999, ids: { tmdb: 550, imdb: "tt0137523" } } }]);
     expect(movies[0]).toMatchObject({ id: 550, imdb_id: "tt0137523" });
@@ -85,6 +91,26 @@ describe("other sources", () => {
   });
 });
 
+describe("letterboxd pages", () => {
+  it("reads a rating from the films grid", () => {
+    const html = `<li class="griditem"><div class="react-component" data-component-class="LazyPoster" data-item-slug="amelie" data-item-name="Amelie (2001)" data-item-link="/film/amelie/" data-postered-identifier='{"type":"film"}'></div><span class="rating rated-7">★★★½</span></li>`;
+    expect(parsePosters(html)).toEqual([{ slug: "amelie", title: "Amelie", year: "2001", rating: 7 }]);
+    expect(parseRatingToken("3.5")).toBe(7);
+    expect(parseRatingToken("7")).toBe(7);
+    expect(parseRatingToken("none")).toBeNull();
+  });
+
+  it("reads the current poster markup", () => {
+    const html = `<div class="react-component" data-component-class="LazyPoster" data-item-slug="amelie" data-item-name="Am&amp;lie (2001)" data-item-link="/film/amelie/" data-postered-identifier="{&quot;type&quot;:&quot;film&quot;}"></div>`;
+    expect(parsePosters(html)).toEqual([{ slug: "amelie", title: "Am&lie", year: "2001" }]);
+  });
+
+  it("reads tmdb and imdb links from a film page", () => {
+    const html = `<a href="https://www.themoviedb.org/movie/194/">tmdb</a><a href="http://www.imdb.com/title/tt0211915/maindetails">imdb</a>`;
+    expect(parseFilmIds(html)).toMatchObject({ tmdb: "194", imdb: "tt0211915" });
+  });
+});
+
 describe("http", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -96,7 +122,11 @@ describe("http", () => {
     const app = createApp();
     const home = await app.request("http://localhost/");
     expect(home.status).toBe(200);
-    expect(await home.text()).toContain("Custom Lists");
+    const html = await home.text();
+    expect(html).toContain("Custom Lists");
+    expect(html).toContain("https://vercel.com/new/clone?repository-url=");
+    expect(html).toContain("https://deploy.workers.cloudflare.com/?url=https://github.com/kvithana/filmfeed");
+    expect(html).toContain("http://localhost/kalpal/films/rated/3.5");
     const health = await app.request("http://localhost/health");
     expect(await health.json()).toEqual({ ok: true, name: "filmfeed" });
   });
@@ -111,6 +141,57 @@ describe("http", () => {
     expect(response.headers.get("x-filmfeed-source")).toBe("letterboxd-diary");
     const body = (await response.json()) as { id: number }[];
     expect(body.map((movie) => movie.id)).toEqual([194, 550]);
+  });
+
+  it("turns a public list page into Radarr JSON when RSS is blocked", async () => {
+    const list = `<div class="react-component" data-component-class="LazyPoster" data-item-slug="amelie" data-item-name="Amelie (2001)" data-item-link="/film/amelie/" data-postered-identifier='{"type":"film"}'></div>`;
+    const film = `<a href="https://www.themoviedb.org/movie/194/">tmdb</a><a href="http://www.imdb.com/title/tt0211915/">imdb</a><a href="/films/year/2001">`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/rss/")) {
+          return new Response("<!DOCTYPE html>Just a moment...", { status: 403, headers: { "content-type": "text/html" } });
+        }
+        if (url.includes("/film/")) {
+          return new Response(film, { status: 200, headers: { "content-type": "text/html" } });
+        }
+        return new Response(list, { status: 200, headers: { "content-type": "text/html" } });
+      }),
+    );
+    const response = await createApp().request("http://localhost/screeny05/list/jackie-chan/?limit=5");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-filmfeed-source")).toBe("letterboxd-list");
+    const body = (await response.json()) as { id: number; imdb_id?: string; release_year?: string }[];
+    expect(body).toEqual([expect.objectContaining({ id: 194, imdb_id: "tt0211915", title: "Amelie", release_year: "2001" })]);
+  });
+
+  it("filters a films page by star rating", async () => {
+    const grid = (slug: string, name: string, score: number) =>
+      `<li class="griditem"><div class="react-component" data-component-class="LazyPoster" data-item-slug="${slug}" data-item-name="${name}" data-item-link="/film/${slug}/" data-postered-identifier='{"type":"film"}'></div><span class="rating rated-${score}"></span></li>`;
+    const list = grid("amelie", "Amelie (2001)", 7) + grid("dink", "The Dink (2026)", 4);
+    const film = (id: string) => `<a href="https://www.themoviedb.org/movie/${id}/">tmdb</a>`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        const id = url.includes("amelie") ? "194" : "1";
+        const body = url.includes("/film/") ? film(id) : list;
+        return new Response(body, { status: 200, headers: { "content-type": "text/html" } });
+      }),
+    );
+    const response = await createApp().request("http://localhost/kalpal/films/rated/3.5?limit=5");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { id: number; title: string }[];
+    expect(body.map((movie) => movie.title)).toEqual(["Amelie"]);
+    expect(body[0]?.id).toBe(194);
+  });
+
+  it("rejects genre filters that Letterboxd blocks", async () => {
+    const response = await createApp().request("http://localhost/kalpal/films/genre/drama");
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/does not bypass/);
   });
 
   it("explains a blocked letterboxd list without pretending it succeeded", async () => {
