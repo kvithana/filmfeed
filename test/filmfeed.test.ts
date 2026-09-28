@@ -122,7 +122,11 @@ describe("http", () => {
     const app = createApp();
     const home = await app.request("http://localhost/");
     expect(home.status).toBe(200);
-    expect(await home.text()).toContain("Custom Lists");
+    const html = await home.text();
+    expect(html).toContain("Custom Lists");
+    expect(html).toContain("https://vercel.com/new/clone?repository-url=");
+    expect(html).toContain("https://deploy.workers.cloudflare.com/?url=https://github.com/kvithana/filmfeed");
+    expect(html).toContain("http://localhost/kalpal/films/rated/3.5");
     const health = await app.request("http://localhost/health");
     expect(await health.json()).toEqual({ ok: true, name: "filmfeed" });
   });
