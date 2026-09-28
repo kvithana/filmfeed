@@ -1,4 +1,4 @@
-export function homePage(): string {
+export function homePage(origin = "https://YOUR_DOMAIN"): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -38,10 +38,10 @@ export function homePage(): string {
       <li>Set List URL to one of the feed URLs below, on your deployment.</li>
       <li>Test, then save. Radarr reads the <code>id</code> field as the TMDB id.</li>
     </ol>
-    <pre>https://YOUR_DOMAIN/api/mdblist/linaspurinis/top-watched-movies-of-the-week
-https://YOUR_DOMAIN/api/letterboxd/dave
-https://YOUR_DOMAIN/api/tmdb/1
-https://YOUR_DOMAIN/api/trakt/someuser/watchlist</pre>
+    <pre>${origin}/api/mdblist/linaspurinis/top-watched-movies-of-the-week
+${origin}/api/letterboxd/dave
+${origin}/api/tmdb/1
+${origin}/api/trakt/someuser/watchlist</pre>
 
     <h2>Sources</h2>
     <ul>

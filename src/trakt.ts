@@ -29,13 +29,19 @@ export function traktToRadarr(payload: unknown): RadarrMovie[] {
   return movies;
 }
 
+export function traktMoviesUrl(user: string, list: string): string {
+  const owner = encodeURIComponent(user);
+  if (list === "watchlist") return `https://api.trakt.tv/users/${owner}/watchlist/movies`;
+  return `https://api.trakt.tv/users/${owner}/lists/${encodeURIComponent(list)}/items/movies`;
+}
+
 export async function fetchTraktList(user: string, list: string, clientId: string, limit = 500): Promise<RadarrMovie[]> {
   const movies: RadarrMovie[] = [];
   const pageSize = 100;
   const maxPages = Math.min(10, Math.max(1, Math.ceil(limit / pageSize)));
 
   for (let page = 1; page <= maxPages && movies.length < limit; page += 1) {
-    const url = new URL(`https://api.trakt.tv/users/${encodeURIComponent(user)}/lists/${encodeURIComponent(list)}/items/movies`);
+    const url = new URL(traktMoviesUrl(user, list));
     url.searchParams.set("page", String(page));
     url.searchParams.set("limit", String(pageSize));
 

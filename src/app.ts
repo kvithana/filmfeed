@@ -67,7 +67,7 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     return c.json({ error: message }, status as 400, { "cache-control": "public, max-age=60" });
   });
 
-  app.get("/", (c) => c.html(homePage()));
+  app.get("/", (c) => c.html(homePage(new URL(c.req.url).origin)));
 
   app.get("/health", (c) => c.json({ ok: true, name: "filmfeed" }));
 
