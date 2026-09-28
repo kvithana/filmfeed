@@ -48,7 +48,7 @@ ${origin}/api/trakt/someuser/watchlist</pre>
     <ul>
       <li><strong>MDBList</strong> public lists. Full list, TMDB and IMDb ids. No key.</li>
       <li><strong>Letterboxd diary RSS</strong> at <code>/api/letterboxd/:user</code>. About the 100 most recent public diary entries, with TMDB ids. This is the feed Letterboxd publishes.</li>
-      <li><strong>Letterboxd lists, watchlists, and watched films</strong> use the same path as letterboxd.com, for example <code>/you/list/your-list/</code>. filmfeed reads the public page when Letterboxd serves it, then the TMDB link on each film. A challenge page stops the request. filmfeed does not bypass that. Up to 80 films per response. Add <code>?limit=20</code> to take fewer.</li>
+      <li><strong>Letterboxd lists, watchlists, and watched films</strong> use the same path as letterboxd.com, for example <code>/you/list/your-list/</code>. Rating, year, and decade filters work too: <code>/you/films/rated/3.5</code>, <code>/you/films/year/2024</code>, <code>/you/films/decade/2010s</code>. Letterboxd blocks the filtered URLs, so filmfeed applies those filters from the public films page. Genre and sort URLs stay blocked.</li>
       <li><strong>TMDB lists</strong> need <code>TMDB_API_KEY</code> on the deployment.</li>
       <li><strong>Trakt lists</strong> need <code>TRAKT_CLIENT_ID</code> on the deployment.</li>
     </ul>

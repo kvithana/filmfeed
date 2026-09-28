@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { filmsFromLetterboxdPages } from "./letterboxd-html.js";
+import { filmsFromLetterboxdPages, posterFilter } from "./letterboxd-html.js";
 import { isBlockedFeed, letterboxdToRadarr, parseLetterboxdRss } from "./letterboxd.js";
 import {
   HttpError,
@@ -76,6 +76,16 @@ function publicUser(value: string): string {
   return user;
 }
 
+async function filmsFiltered(
+  c: { req: { query: (name: string) => string | undefined; param: (name: string) => string } },
+  user: string,
+): Promise<Response> {
+  const kind = c.req.param("kind");
+  const value = c.req.param("value");
+  const catalog = await filmsFromLetterboxdPages(`${user}/films/`, parseLimit(c.req.query("limit")) ?? 80, posterFilter(kind, value));
+  return moviesResponse(catalog.movies, "letterboxd-films", wantsEmptyError(c.req.query("errorOnEmpty")), catalog.truncated);
+}
+
 async function catalogResponse(
   c: { req: { query: (name: string) => string | undefined } },
   pagePath: string,
@@ -108,6 +118,9 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
         "/api/letterboxd/:user/films",
         "/api/letterboxd/:user/list/:slug",
         "/:user/watchlist",
+        "/:user/films/rated/:rating",
+        "/:user/films/year/:year",
+        "/:user/films/decade/:decade",
         "/:user/films",
         "/:user/list/:slug",
         "/api/mdblist/:user/:list",
@@ -124,6 +137,7 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
   });
 
   app.get("/api/letterboxd/:user/watchlist", (c) => catalogResponse(c, `${requireUser(c.req.param("user"))}/watchlist/`, "letterboxd-watchlist"));
+  app.get("/api/letterboxd/:user/films/:kind/:value", (c) => filmsFiltered(c, requireUser(c.req.param("user"))));
   app.get("/api/letterboxd/:user/films", (c) => catalogResponse(c, `${requireUser(c.req.param("user"))}/films/`, "letterboxd-films"));
   app.get("/api/letterboxd/:user/list/:slug", (c) => {
     const user = requireUser(c.req.param("user"));
@@ -132,6 +146,7 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
   });
 
   app.get("/:user/watchlist", (c) => catalogResponse(c, `${publicUser(c.req.param("user"))}/watchlist/`, "letterboxd-watchlist"));
+  app.get("/:user/films/:kind/:value", (c) => filmsFiltered(c, publicUser(c.req.param("user"))));
   app.get("/:user/films", (c) => catalogResponse(c, `${publicUser(c.req.param("user"))}/films/`, "letterboxd-films"));
   app.get("/:user/list/:slug", (c) => {
     const user = publicUser(c.req.param("user"));

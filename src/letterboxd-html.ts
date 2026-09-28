@@ -14,6 +14,8 @@ export type Poster = {
   slug: string;
   title: string;
   year?: string;
+  /** Letterboxd's 1–10 rating. 7 is 3.5 stars. */
+  rating?: number;
 };
 
 function decode(value: string): string {
@@ -37,21 +39,89 @@ export function splitTitle(name: string): { title: string; year?: string } {
   return { title: match[1].trim(), year: match[2] };
 }
 
+const POSTER_TAG = /<div\b(?=[^>]*\bdata-component-class="LazyPoster")[^>]*>/g;
+
 export function parsePosters(html: string): Poster[] {
-  const tags = html.match(/<div\b(?=[^>]*\bdata-component-class="LazyPoster")[^>]*>/g) ?? [];
+  const items = [...html.matchAll(/<li class="griditem">([\s\S]*?)<\/li>/g)].map((match) => match[1] ?? "");
+  const chunks = items.some((item) => item.includes("LazyPoster")) ? items : [html];
   const posters: Poster[] = [];
   const seen = new Set<string>();
-  for (const tag of tags) {
-    const identifier = attr(tag, "data-postered-identifier") ?? "";
-    if (identifier && !/"type"\s*:\s*"film"/i.test(identifier)) continue;
-    const link = attr(tag, "data-item-link") ?? "";
-    const slug = attr(tag, "data-item-slug") ?? link.replace(/^\/film\//, "").replace(/\/$/, "");
-    if (!slug || seen.has(slug) || !/^[a-z0-9][a-z0-9-]*$/i.test(slug)) continue;
-    seen.add(slug);
-    const named = splitTitle(attr(tag, "data-item-name") ?? slug);
-    posters.push({ slug, title: named.title || slug, year: named.year });
+  for (const chunk of chunks) {
+    const tags = chunk.match(POSTER_TAG) ?? [];
+    const rating = tags.length === 1 ? readRating(chunk) : undefined;
+    for (const tag of tags) {
+      const poster = posterFromTag(tag);
+      if (!poster || seen.has(poster.slug)) continue;
+      seen.add(poster.slug);
+      if (rating !== undefined) poster.rating = rating;
+      posters.push(poster);
+    }
   }
   return posters;
+}
+
+function posterFromTag(tag: string): Poster | null {
+  const identifier = attr(tag, "data-postered-identifier") ?? "";
+  if (identifier && !/"type"\s*:\s*"film"/i.test(identifier)) return null;
+  const link = attr(tag, "data-item-link") ?? "";
+  const slug = attr(tag, "data-item-slug") ?? link.replace(/^\/film\//, "").replace(/\/$/, "");
+  if (!slug || !/^[a-z0-9][a-z0-9-]*$/i.test(slug)) return null;
+  const named = splitTitle(attr(tag, "data-item-name") ?? slug);
+  return { slug, title: named.title || slug, year: named.year };
+}
+
+function readRating(chunk: string): number | undefined {
+  const match = chunk.match(/\brated-(\d+)\b/);
+  if (!match?.[1]) return undefined;
+  const value = Number(match[1]);
+  return value >= 1 && value <= 10 ? value : undefined;
+}
+
+/** `3.5` is stars out of 5. `7` is Letterboxd's own 1–10 value. Both mean 3.5 stars. `none` is unrated. */
+export function parseRatingToken(value: string): number | null {
+  if (value === "none") return null;
+  if (value.includes(".")) {
+    if (!/^\d\.\d$/.test(value)) {
+      throw new HttpError(400, "Star ratings look like 3.5 or 4.0. Whole numbers from 1 to 10 use Letterboxd's scale, where 7 is 3.5 stars.");
+    }
+    const stars = Number(value);
+    const halves = stars * 2;
+    if (stars < 0.5 || stars > 5 || halves !== Math.round(halves)) {
+      throw new HttpError(400, "Star ratings are half-stars from 0.5 to 5.");
+    }
+    return halves;
+  }
+  if (/^\d{1,2}$/.test(value)) {
+    const score = Number(value);
+    if (score >= 1 && score <= 10) return score;
+  }
+  throw new HttpError(400, "Rating must be 0.5–5 stars, such as 3.5, or a Letterboxd score from 1 to 10.");
+}
+
+export function posterFilter(kind: string, value: string): (poster: Poster) => boolean {
+  if (kind === "rated") {
+    const score = parseRatingToken(value);
+    return (poster) => (score === null ? poster.rating === undefined : poster.rating === score);
+  }
+  if (kind === "year") {
+    if (!/^\d{4}$/.test(value)) throw new HttpError(400, "Year must be four digits, such as 2024.");
+    return (poster) => poster.year === value;
+  }
+  if (kind === "decade") {
+    const match = /^(\d{3}\d)s$/.exec(value);
+    const start = match?.[1] ? Number(match[1]) : Number.NaN;
+    if (!Number.isInteger(start) || start % 10 !== 0) {
+      throw new HttpError(400, "Decade must look like 2010s.");
+    }
+    return (poster) => {
+      const year = Number(poster.year);
+      return year >= start && year < start + 10;
+    };
+  }
+  throw new HttpError(
+    400,
+    `Letterboxd blocks /films/${kind}/ pages, and filmfeed does not bypass that. Rating, year, and decade filters are read from the public films page instead.`,
+  );
 }
 
 export function parseNextPath(html: string): string | null {
@@ -74,14 +144,20 @@ export function isChallenge(response: Response, body: string): boolean {
   return body.includes("Just a moment");
 }
 
-export async function filmsFromLetterboxdPages(pagePath: string, limit: number): Promise<{ movies: RadarrMovie[]; truncated: boolean }> {
+export async function filmsFromLetterboxdPages(
+  pagePath: string,
+  limit: number,
+  filter?: (poster: Poster) => boolean,
+): Promise<{ movies: RadarrMovie[]; truncated: boolean }> {
   const cap = Math.min(limit, filmCap());
   const posters: Poster[] = [];
+  const seen = new Set<string>();
   let next: string | null = `/${pagePath.replace(/^\/+|\/+$/g, "")}/`;
   let pages = 0;
   let truncated = false;
+  const maxPages = filter ? 20 : 8;
 
-  while (next && posters.length < cap && pages < 8) {
+  while (next && posters.length < cap && pages < maxPages) {
     const page = await fetchText(`https://letterboxd.com${next}`, {
       headers: { accept: "text/html" },
     });
@@ -93,12 +169,18 @@ export async function filmsFromLetterboxdPages(pagePath: string, limit: number):
       throw new HttpError(page.response.status === 404 ? 404 : 502, `Letterboxd returned ${page.response.status}`);
     }
     pages += 1;
-    const found = parsePosters(page.body);
-    posters.push(...found.filter((poster) => !posters.some((existing) => existing.slug === poster.slug)));
+    for (const poster of parsePosters(page.body)) {
+      if (seen.has(poster.slug)) continue;
+      seen.add(poster.slug);
+      if (filter && !filter(poster)) continue;
+      posters.push(poster);
+    }
     const following = parseNextPath(page.body);
     next = following && following !== next ? following : null;
-    if (posters.length >= cap && following && cap === filmCap()) truncated = true;
+    if (posters.length >= cap && next && cap === filmCap()) truncated = true;
   }
+
+  if (pages >= maxPages && next) truncated = true;
 
   const slice = posters.slice(0, cap);
   if (slice.length < posters.length && cap === filmCap()) truncated = true;

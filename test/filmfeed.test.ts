@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { createApp } from "../src/app.js";
-import { parseFilmIds, parsePosters } from "../src/letterboxd-html.js";
+import { parseFilmIds, parsePosters, parseRatingToken } from "../src/letterboxd-html.js";
 import { letterboxdToRadarr, parseLetterboxdRss } from "../src/letterboxd.js";
 import { dedupe, parseLimit } from "../src/lib.js";
 import { mdblistToRadarr } from "../src/mdblist.js";
@@ -92,6 +92,14 @@ describe("other sources", () => {
 });
 
 describe("letterboxd pages", () => {
+  it("reads a rating from the films grid", () => {
+    const html = `<li class="griditem"><div class="react-component" data-component-class="LazyPoster" data-item-slug="amelie" data-item-name="Amelie (2001)" data-item-link="/film/amelie/" data-postered-identifier='{"type":"film"}'></div><span class="rating rated-7">★★★½</span></li>`;
+    expect(parsePosters(html)).toEqual([{ slug: "amelie", title: "Amelie", year: "2001", rating: 7 }]);
+    expect(parseRatingToken("3.5")).toBe(7);
+    expect(parseRatingToken("7")).toBe(7);
+    expect(parseRatingToken("none")).toBeNull();
+  });
+
   it("reads the current poster markup", () => {
     const html = `<div class="react-component" data-component-class="LazyPoster" data-item-slug="amelie" data-item-name="Am&amp;lie (2001)" data-item-link="/film/amelie/" data-postered-identifier="{&quot;type&quot;:&quot;film&quot;}"></div>`;
     expect(parsePosters(html)).toEqual([{ slug: "amelie", title: "Am&lie", year: "2001" }]);
@@ -152,6 +160,34 @@ describe("http", () => {
     expect(response.headers.get("x-filmfeed-source")).toBe("letterboxd-list");
     const body = (await response.json()) as { id: number; imdb_id?: string; release_year?: string }[];
     expect(body).toEqual([expect.objectContaining({ id: 194, imdb_id: "tt0211915", title: "Amelie", release_year: "2001" })]);
+  });
+
+  it("filters a films page by star rating", async () => {
+    const grid = (slug: string, name: string, score: number) =>
+      `<li class="griditem"><div class="react-component" data-component-class="LazyPoster" data-item-slug="${slug}" data-item-name="${name}" data-item-link="/film/${slug}/" data-postered-identifier='{"type":"film"}'></div><span class="rating rated-${score}"></span></li>`;
+    const list = grid("amelie", "Amelie (2001)", 7) + grid("dink", "The Dink (2026)", 4);
+    const film = (id: string) => `<a href="https://www.themoviedb.org/movie/${id}/">tmdb</a>`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        const id = url.includes("amelie") ? "194" : "1";
+        const body = url.includes("/film/") ? film(id) : list;
+        return new Response(body, { status: 200, headers: { "content-type": "text/html" } });
+      }),
+    );
+    const response = await createApp().request("http://localhost/kalpal/films/rated/3.5?limit=5");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { id: number; title: string }[];
+    expect(body.map((movie) => movie.title)).toEqual(["Amelie"]);
+    expect(body[0]?.id).toBe(194);
+  });
+
+  it("rejects genre filters that Letterboxd blocks", async () => {
+    const response = await createApp().request("http://localhost/kalpal/films/genre/drama");
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toMatch(/does not bypass/);
   });
 
   it("explains a blocked letterboxd list without pretending it succeeded", async () => {

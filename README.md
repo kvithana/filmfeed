@@ -43,6 +43,9 @@ Responses are cached for an hour (`Cache-Control`), so Radarr's refresh does not
 | `GET /:user/list/:slug` | A public Letterboxd list. Same path as on letterboxd.com. Also at `/api/letterboxd/:user/list/:slug`. | None |
 | `GET /:user/watchlist` | A public watchlist. | None |
 | `GET /:user/films` | A public watched-films page. | None |
+| `GET /:user/films/rated/:rating` | Films at that rating. `3.5` means 3.5 stars. `7` is the same rating on Letterboxd's 1–10 scale. `none` is unrated. | None |
+| `GET /:user/films/year/:year` | Watched films released that year. | None |
+| `GET /:user/films/decade/:decade` | Watched films from that decade, such as `2010s`. | None |
 | `GET /api/tmdb/:listId` | A [TMDB](https://www.themoviedb.org/) list, up to 500 films. | `TMDB_API_KEY` |
 | `GET /api/trakt/:user/:list` | A public [Trakt](https://trakt.tv/) list, up to 500 films. | `TRAKT_CLIENT_ID` |
 
@@ -100,7 +103,7 @@ Node 20 or newer. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 - Letterboxd diary feeds are a recent window, not a user's entire film history.
 - A single response includes at most 80 films from a Letterboxd list page, or 30 on Cloudflare’s free plan (50 outbound requests per invocation). Larger lists should be split, or copied to MDBList.
-- Filmography, studio, and popular-film pages are not separate routes. Watched films, watchlists, and lists are.
+- Genre, country, language, and sort URLs such as `/films/by/` or `/films/genre/` are blocked by Letterboxd. filmfeed does not request them. Rating, year, and decade are applied from the public films page.
 - Letterboxd challenge pages are returned as an error. filmfeed does not try to get past them.
 - TMDB and Trakt stay dark until that deployment has a key. Both keys are free from those sites.
 - This project is not affiliated with Letterboxd, Radarr, TMDB, MDBList, or Trakt.
