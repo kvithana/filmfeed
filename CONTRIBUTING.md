@@ -20,6 +20,6 @@ npm run typecheck
 
 ## What does not
 
-Do not add HTML scraping, Cloudflare challenge solving, or anything else that works around a site's published access rules. Letterboxd list pages are the example this project is deliberately not solving that way.
+Do not add Cloudflare challenge solving, headless browsers, or requests that ignore a site's robots.txt. Reading a Letterboxd page that already returned HTTP 200 is fine. Getting around a challenge page is not.
 
 Keep changes small enough to review. Add or update a test when you change feed parsing or HTTP behavior.

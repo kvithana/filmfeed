@@ -39,6 +39,7 @@ export function homePage(origin = "https://YOUR_DOMAIN"): string {
       <li>Test, then save. Radarr reads the <code>id</code> field as the TMDB id.</li>
     </ol>
     <pre>${origin}/api/mdblist/linaspurinis/top-watched-movies-of-the-week
+${origin}/screeny05/list/jackie-chan-the-definitive-list/
 ${origin}/api/letterboxd/dave
 ${origin}/api/tmdb/1
 ${origin}/api/trakt/someuser/watchlist</pre>
@@ -47,14 +48,14 @@ ${origin}/api/trakt/someuser/watchlist</pre>
     <ul>
       <li><strong>MDBList</strong> public lists. Full list, TMDB and IMDb ids. No key.</li>
       <li><strong>Letterboxd diary RSS</strong> at <code>/api/letterboxd/:user</code>. About the 100 most recent public diary entries, with TMDB ids. This is the feed Letterboxd publishes.</li>
-      <li><strong>Letterboxd list and watchlist RSS</strong> are requested as published, and returned when Letterboxd serves them. They are often blocked. filmfeed does not try to get around that.</li>
+      <li><strong>Letterboxd lists, watchlists, and watched films</strong> use the same path as letterboxd.com, for example <code>/you/list/your-list/</code>. filmfeed reads the public page when Letterboxd serves it, then the TMDB link on each film. A challenge page stops the request. filmfeed does not bypass that. Up to 80 films per response. Add <code>?limit=20</code> to take fewer.</li>
       <li><strong>TMDB lists</strong> need <code>TMDB_API_KEY</code> on the deployment.</li>
       <li><strong>Trakt lists</strong> need <code>TRAKT_CLIENT_ID</code> on the deployment.</li>
     </ul>
     <p>Add <code>?limit=50</code> to cap a feed. Letterboxd also accepts <code>?minRating=4</code>. <code>?errorOnEmpty=true</code> returns 404 when nothing matched.</p>
 
     <h2>Why this is smaller than a scraper</h2>
-    <p>The usual Letterboxd-to-Radarr bridge keeps a web server and a cache running so it can page through the site. Letterboxd’s terms disallow that kind of automated extraction, and the list pages sit behind a challenge page. filmfeed only calls published feeds and official APIs, then caches the JSON at the edge for an hour.</p>
+    <p>The usual Letterboxd-to-Radarr bridge keeps a web server and Redis running. filmfeed is one HTTP function. Diary entries come from Letterboxd’s RSS feed. Lists come from the public page when Letterboxd returns it. Finished JSON is cached at the edge for an hour, so Radarr’s refresh does not repeat that work.</p>
     <p class="muted">Not affiliated with Letterboxd, Radarr, TMDB, MDBList, or Trakt.</p>
   </main>
 </body>

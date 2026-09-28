@@ -2,7 +2,7 @@
 
 Public movie lists, as the JSON [Radarr](https://radarr.video/) already imports. One HTTP function, cached at the edge. Nothing you have to keep running.
 
-[letterboxd-list-radarr](https://github.com/screeny05/letterboxd-list-radarr) did this by scraping Letterboxd and holding a web server plus Redis open. That service is awkward to host for free, and Letterboxd’s terms now disallow automated extraction of the site. filmfeed only reads feeds and official APIs those sites publish.
+[letterboxd-list-radarr](https://github.com/screeny05/letterboxd-list-radarr) did this with a web server and Redis. filmfeed is one HTTP function for Cloudflare, Vercel, or any host that can run Node. Diary entries come from Letterboxd’s RSS feed. Lists come from the public page when Letterboxd serves it. A challenge page is an error. filmfeed does not try to get past one.
 
 [![CI](https://github.com/kvithana/filmfeed/actions/workflows/ci.yml/badge.svg)](https://github.com/kvithana/filmfeed/actions/workflows/ci.yml)
 
@@ -14,6 +14,7 @@ Public movie lists, as the JSON [Radarr](https://radarr.video/) already imports.
 
 ```text
 https://YOUR_DOMAIN/api/mdblist/linaspurinis/top-watched-movies-of-the-week
+https://YOUR_DOMAIN/screeny05/list/jackie-chan-the-definitive-list/
 https://YOUR_DOMAIN/api/letterboxd/dave
 https://YOUR_DOMAIN/api/tmdb/1
 https://YOUR_DOMAIN/api/trakt/someuser/watchlist
@@ -39,12 +40,13 @@ Responses are cached for an hour (`Cache-Control`), so Radarr's refresh does not
 | --- | --- | --- |
 | `GET /api/mdblist/:user/:list` | A public [MDBList](https://mdblist.com/) list. Movies only. | None |
 | `GET /api/letterboxd/:user` | The public [Letterboxd](https://letterboxd.com/) diary RSS. About the 100 most recent entries. | None |
-| `GET /api/letterboxd/:user/watchlist` | The published watchlist RSS, when Letterboxd serves it. | None |
-| `GET /api/letterboxd/:user/list/:slug` | The published list RSS, when Letterboxd serves it. | None |
+| `GET /:user/list/:slug` | A public Letterboxd list. Same path as on letterboxd.com. Also at `/api/letterboxd/:user/list/:slug`. | None |
+| `GET /:user/watchlist` | A public watchlist. | None |
+| `GET /:user/films` | A public watched-films page. | None |
 | `GET /api/tmdb/:listId` | A [TMDB](https://www.themoviedb.org/) list, up to 500 films. | `TMDB_API_KEY` |
 | `GET /api/trakt/:user/:list` | A public [Trakt](https://trakt.tv/) list, up to 500 films. | `TRAKT_CLIENT_ID` |
 
-Letterboxd list and watchlist RSS URLs often return a challenge page. filmfeed reports that and stops. It does not solve challenges or scrape HTML. For a full Letterboxd list, copy it to MDBList (or TMDB, or Trakt) and use that feed. Diary RSS is the part Letterboxd still publishes in the open, and it includes TMDB ids.
+Letterboxd’s list RSS is often a Cloudflare challenge. filmfeed does not solve challenges. When the public list page itself is served, filmfeed reads the film links on that page and the TMDB id linked from each film, up to 80 films. `?limit=` can lower that. If the page is blocked, copy the list to MDBList and use that feed. Diary RSS is separate and includes TMDB ids directly.
 
 `GET /` is a short HTML page. `GET /health` returns `{ "ok": true }`. `GET /api` lists the routes.
 
@@ -97,7 +99,9 @@ Node 20 or newer. See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Limitations
 
 - Letterboxd diary feeds are a recent window, not a user's entire film history.
-- Letterboxd list, watchlist, filmography, and popular-film pages are not scraped.
+- A single response includes at most 80 films from a Letterboxd list page, or 30 on Cloudflare’s free plan (50 outbound requests per invocation). Larger lists should be split, or copied to MDBList.
+- Filmography, studio, and popular-film pages are not separate routes. Watched films, watchlists, and lists are.
+- Letterboxd challenge pages are returned as an error. filmfeed does not try to get past them.
 - TMDB and Trakt stay dark until that deployment has a key. Both keys are free from those sites.
 - This project is not affiliated with Letterboxd, Radarr, TMDB, MDBList, or Trakt.
 

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { filmsFromLetterboxdPages } from "./letterboxd-html.js";
 import { isBlockedFeed, letterboxdToRadarr, parseLetterboxdRss } from "./letterboxd.js";
 import {
   HttpError,
@@ -30,13 +31,14 @@ function readEnv(env: Bindings | undefined, key: keyof Bindings): string | undef
   return undefined;
 }
 
-function moviesResponse(movies: RadarrMovie[], source: string, errorOnEmpty: boolean): Response {
+function moviesResponse(movies: RadarrMovie[], source: string, errorOnEmpty: boolean, truncated = false): Response {
   if (movies.length === 0 && errorOnEmpty) {
     return Response.json({ error: "List is empty" }, { status: 404, headers: cacheHeaders(60) });
   }
   const headers = cacheHeaders(3600);
   headers.set("x-filmfeed-source", source);
   headers.set("x-filmfeed-count", String(movies.length));
+  if (truncated) headers.set("x-filmfeed-truncated", "true");
   return Response.json(movies, { headers });
 }
 
@@ -58,8 +60,33 @@ async function letterboxdFeed(path: string, minRating: number | undefined): Prom
   return letterboxdToRadarr(parseLetterboxdRss(body), minRating);
 }
 
+async function letterboxdCatalog(pagePath: string, limit: number | undefined): Promise<{ movies: RadarrMovie[]; truncated: boolean }> {
+  const rssPath = `${pagePath.replace(/\/+$/, "")}/rss/`;
+  const rss = await fetchText(`https://letterboxd.com/${rssPath}`);
+  if (!isBlockedFeed(rss.response, rss.body) && rss.response.ok) {
+    const movies = dedupe(letterboxdToRadarr(parseLetterboxdRss(rss.body)), limit);
+    if (movies.length > 0) return { movies, truncated: false };
+  }
+  return filmsFromLetterboxdPages(pagePath, limit ?? 80);
+}
+
+function publicUser(value: string): string {
+  const user = requireUser(value);
+  if (user === "api" || user === "health") throw new HttpError(404, "Not found");
+  return user;
+}
+
+async function catalogResponse(
+  c: { req: { query: (name: string) => string | undefined } },
+  pagePath: string,
+  source: string,
+): Promise<Response> {
+  const catalog = await letterboxdCatalog(pagePath, parseLimit(c.req.query("limit")));
+  return moviesResponse(catalog.movies, source, wantsEmptyError(c.req.query("errorOnEmpty")), catalog.truncated);
+}
+
 export function createApp(): Hono<{ Bindings: Bindings }> {
-  const app = new Hono<{ Bindings: Bindings }>();
+  const app = new Hono<{ Bindings: Bindings }>({ strict: false });
 
   app.onError((error, c) => {
     const status = error instanceof HttpError ? error.status : 500;
@@ -78,7 +105,11 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
       feeds: [
         "/api/letterboxd/:user",
         "/api/letterboxd/:user/watchlist",
+        "/api/letterboxd/:user/films",
         "/api/letterboxd/:user/list/:slug",
+        "/:user/watchlist",
+        "/:user/films",
+        "/:user/list/:slug",
         "/api/mdblist/:user/:list",
         "/api/tmdb/:listId",
         "/api/trakt/:user/:list",
@@ -92,17 +123,20 @@ export function createApp(): Hono<{ Bindings: Bindings }> {
     return moviesResponse(dedupe(movies, parseLimit(c.req.query("limit"))), "letterboxd-diary", wantsEmptyError(c.req.query("errorOnEmpty")));
   });
 
-  app.get("/api/letterboxd/:user/watchlist", async (c) => {
-    const user = requireUser(c.req.param("user"));
-    const movies = await letterboxdFeed(`${user}/watchlist/rss/`, parseMinRating(c.req.query("minRating")));
-    return moviesResponse(dedupe(movies, parseLimit(c.req.query("limit"))), "letterboxd-watchlist", wantsEmptyError(c.req.query("errorOnEmpty")));
-  });
-
-  app.get("/api/letterboxd/:user/list/:slug", async (c) => {
+  app.get("/api/letterboxd/:user/watchlist", (c) => catalogResponse(c, `${requireUser(c.req.param("user"))}/watchlist/`, "letterboxd-watchlist"));
+  app.get("/api/letterboxd/:user/films", (c) => catalogResponse(c, `${requireUser(c.req.param("user"))}/films/`, "letterboxd-films"));
+  app.get("/api/letterboxd/:user/list/:slug", (c) => {
     const user = requireUser(c.req.param("user"));
     const slug = requireSlug(c.req.param("slug"), "list");
-    const movies = await letterboxdFeed(`${user}/list/${slug}/rss/`, parseMinRating(c.req.query("minRating")));
-    return moviesResponse(dedupe(movies, parseLimit(c.req.query("limit"))), "letterboxd-list", wantsEmptyError(c.req.query("errorOnEmpty")));
+    return catalogResponse(c, `${user}/list/${slug}/`, "letterboxd-list");
+  });
+
+  app.get("/:user/watchlist", (c) => catalogResponse(c, `${publicUser(c.req.param("user"))}/watchlist/`, "letterboxd-watchlist"));
+  app.get("/:user/films", (c) => catalogResponse(c, `${publicUser(c.req.param("user"))}/films/`, "letterboxd-films"));
+  app.get("/:user/list/:slug", (c) => {
+    const user = publicUser(c.req.param("user"));
+    const slug = requireSlug(c.req.param("slug"), "list");
+    return catalogResponse(c, `${user}/list/${slug}/`, "letterboxd-list");
   });
 
   app.get("/api/mdblist/:user/:list", async (c) => {

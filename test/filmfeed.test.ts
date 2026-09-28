@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { createApp } from "../src/app.js";
+import { parseFilmIds, parsePosters } from "../src/letterboxd-html.js";
 import { letterboxdToRadarr, parseLetterboxdRss } from "../src/letterboxd.js";
 import { dedupe, parseLimit } from "../src/lib.js";
 import { mdblistToRadarr } from "../src/mdblist.js";
@@ -90,6 +91,18 @@ describe("other sources", () => {
   });
 });
 
+describe("letterboxd pages", () => {
+  it("reads the current poster markup", () => {
+    const html = `<div class="react-component" data-component-class="LazyPoster" data-item-slug="amelie" data-item-name="Am&amp;lie (2001)" data-item-link="/film/amelie/" data-postered-identifier="{&quot;type&quot;:&quot;film&quot;}"></div>`;
+    expect(parsePosters(html)).toEqual([{ slug: "amelie", title: "Am&lie", year: "2001" }]);
+  });
+
+  it("reads tmdb and imdb links from a film page", () => {
+    const html = `<a href="https://www.themoviedb.org/movie/194/">tmdb</a><a href="http://www.imdb.com/title/tt0211915/maindetails">imdb</a>`;
+    expect(parseFilmIds(html)).toMatchObject({ tmdb: "194", imdb: "tt0211915" });
+  });
+});
+
 describe("http", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -116,6 +129,29 @@ describe("http", () => {
     expect(response.headers.get("x-filmfeed-source")).toBe("letterboxd-diary");
     const body = (await response.json()) as { id: number }[];
     expect(body.map((movie) => movie.id)).toEqual([194, 550]);
+  });
+
+  it("turns a public list page into Radarr JSON when RSS is blocked", async () => {
+    const list = `<div class="react-component" data-component-class="LazyPoster" data-item-slug="amelie" data-item-name="Amelie (2001)" data-item-link="/film/amelie/" data-postered-identifier='{"type":"film"}'></div>`;
+    const film = `<a href="https://www.themoviedb.org/movie/194/">tmdb</a><a href="http://www.imdb.com/title/tt0211915/">imdb</a><a href="/films/year/2001">`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        if (url.endsWith("/rss/")) {
+          return new Response("<!DOCTYPE html>Just a moment...", { status: 403, headers: { "content-type": "text/html" } });
+        }
+        if (url.includes("/film/")) {
+          return new Response(film, { status: 200, headers: { "content-type": "text/html" } });
+        }
+        return new Response(list, { status: 200, headers: { "content-type": "text/html" } });
+      }),
+    );
+    const response = await createApp().request("http://localhost/screeny05/list/jackie-chan/?limit=5");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-filmfeed-source")).toBe("letterboxd-list");
+    const body = (await response.json()) as { id: number; imdb_id?: string; release_year?: string }[];
+    expect(body).toEqual([expect.objectContaining({ id: 194, imdb_id: "tt0211915", title: "Amelie", release_year: "2001" })]);
   });
 
   it("explains a blocked letterboxd list without pretending it succeeded", async () => {
