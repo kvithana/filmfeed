@@ -4,7 +4,7 @@ import { letterboxdToRadarr, parseLetterboxdRss } from "../src/letterboxd.js";
 import { dedupe, parseLimit } from "../src/lib.js";
 import { mdblistToRadarr } from "../src/mdblist.js";
 import { tmdbPageToRadarr } from "../src/tmdb.js";
-import { traktToRadarr } from "../src/trakt.js";
+import { traktMoviesUrl, traktToRadarr } from "../src/trakt.js";
 
 const diary = `<?xml version="1.0"?>
 <rss><channel>
@@ -61,6 +61,11 @@ describe("other sources", () => {
       items: [{ id: 550, title: "Fight Club", release_date: "1999-10-15", adult: false }],
     });
     expect(movies[0]).toMatchObject({ id: 550, title: "Fight Club", release_year: "1999" });
+  });
+
+  it("uses Trakt's watchlist route for that name", () => {
+    expect(traktMoviesUrl("ada", "watchlist")).toBe("https://api.trakt.tv/users/ada/watchlist/movies");
+    expect(traktMoviesUrl("ada", "criterion")).toBe("https://api.trakt.tv/users/ada/lists/criterion/items/movies");
   });
 
   it("maps trakt movies", () => {
