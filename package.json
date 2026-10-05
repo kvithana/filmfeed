@@ -22,7 +22,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "hono": "^4.13.10",
+    "hono": "^4.13.12",
     "tsx": "^4.23.15"
   },
   "devDependencies": {
